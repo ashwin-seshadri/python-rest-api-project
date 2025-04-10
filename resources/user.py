@@ -1,30 +1,57 @@
+import os
+import requests
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
 from passlib.hash import pbkdf2_sha256
 from flask_jwt_extended import create_access_token, create_refresh_token, get_jwt_identity, jwt_required, get_jwt
+from sqlalchemy import or_
 
 from db import db
 from blocklist import BLOCKLIST
 from models import UserModel
-from schemas import UserSchema
+from schemas import UserSchema, UserRegisterSchema
 
 blp = Blueprint("users", __name__, description="Operations on users.")
+
+def send_simple_message(to, subject, body):
+    domain = os.getenv("MAILGUN_DOMAIN")
+    apiKey = os.getenv("MAILGUN_API_KEY")
+    
+    return requests.post(
+  		f"https://api.mailgun.net/v3/{domain}/messages",
+  		auth=("api", os.getenv('MAILGUN_API_KEY', 'API_KEY')),
+  		data={"from": f"Mailgun Sandbox <postmaster@{domain}>",
+			"to": to,
+  			"subject": subject,
+  			"text": body})
 
 
 @blp.route("/register")
 class UserRegister(MethodView):
-    @blp.arguments(UserSchema)
+    @blp.arguments(UserRegisterSchema)
     def post(self, user_data):
-        if UserModel.query.filter(UserModel.username == user_data["username"]).first():
-            abort(409, message="A user with the username already exists.")
+        if UserModel.query.filter(
+            or_( # or_ from sqlalchemy can take multiple conditions as args and perform OR check on them
+                UserModel.username == user_data["username"],
+                UserModel.email == user_data["email"]
+            )
+            ).first():
+            abort(409, message="A user with the username or email already exists.")
         
         user = UserModel(
             username = user_data["username"],
+            email = user_data["email"],
             password = pbkdf2_sha256.hash(user_data["password"])
         )
 
         db.session.add(user)
         db.session.commit()
+
+        send_simple_message(
+            to=user.email,
+            subject="Successfully signed up",
+            body=f"Hi {user.username}!, you have successfully signed up for flask-smorest rest-api."
+        )
 
         return {"message": "User created successfully."}, 201
     
