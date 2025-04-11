@@ -1,5 +1,6 @@
 import os
 import requests
+from flask import current_app
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
 from passlib.hash import pbkdf2_sha256
@@ -10,21 +11,9 @@ from db import db
 from blocklist import BLOCKLIST
 from models import UserModel
 from schemas import UserSchema, UserRegisterSchema
+from tasks import send_user_registration_email
 
 blp = Blueprint("users", __name__, description="Operations on users.")
-
-def send_simple_message(to, subject, body):
-    domain = os.getenv("MAILGUN_DOMAIN")
-    apiKey = os.getenv("MAILGUN_API_KEY")
-    
-    return requests.post(
-  		f"https://api.mailgun.net/v3/{domain}/messages",
-  		auth=("api", os.getenv('MAILGUN_API_KEY', 'API_KEY')),
-  		data={"from": f"Mailgun Sandbox <postmaster@{domain}>",
-			"to": to,
-  			"subject": subject,
-  			"text": body})
-
 
 @blp.route("/register")
 class UserRegister(MethodView):
@@ -47,11 +36,7 @@ class UserRegister(MethodView):
         db.session.add(user)
         db.session.commit()
 
-        send_simple_message(
-            to=user.email,
-            subject="Successfully signed up",
-            body=f"Hi {user.username}!, you have successfully signed up for flask-smorest rest-api."
-        )
+        current_app.queue.enqueue(send_user_registration_email, user.email, user.username)
 
         return {"message": "User created successfully."}, 201
     
